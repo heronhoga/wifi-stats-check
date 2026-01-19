@@ -4,50 +4,69 @@ import statistics
 import speedtest
 from openpyxl import Workbook
 from datetime import datetime
+import sys
+import time
+
+
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
 
 def run_ping(host="8.8.8.8", count=20):
-    cmd = ["ping", host, "-n", str(count)]
+    log("PING: starting")
+    cmd = ["ping", "-c", str(count), host]
+    log(f"PING: running command -> {' '.join(cmd)}")
+
+    start = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True)
+    log(f"PING: command finished in {round(time.time() - start, 2)}s")
+
     output = result.stdout
 
-    times = [int(t) for t in re.findall(r'time[=<](\d+)ms', output)]
-    packet_loss_match = re.search(r'(\d+)% loss', output)
+    times = [int(t) for t in re.findall(r'time=(\d+)', output)]
+    packet_loss_match = re.search(r'(\d+)% packet loss', output)
     packet_loss = int(packet_loss_match.group(1)) if packet_loss_match else None
 
     avg = statistics.mean(times) if times else None
     jitter = statistics.stdev(times) if len(times) > 1 else 0
 
+    log(f"PING: avg={avg}ms jitter={jitter}ms loss={packet_loss}%")
+
     return avg, jitter, packet_loss
 
 
 def run_speedtest():
-    st = speedtest.Speedtest()
+    log("SPEEDTEST: initializing Speedtest()")
+    start_total = time.time()
+
+    st = speedtest.Speedtest(timeout=10)
+
+    log("SPEEDTEST: fetching server list")
+    st.get_servers()
+
+    log("SPEEDTEST: selecting best server")
     st.get_best_server()
 
+    log("SPEEDTEST: starting download test")
+    start = time.time()
     download = st.download() / 1_000_000
+    log(f"SPEEDTEST: download finished in {round(time.time() - start, 2)}s")
+
+    log("SPEEDTEST: starting upload test")
+    start = time.time()
     upload = st.upload() / 1_000_000
+    log(f"SPEEDTEST: upload finished in {round(time.time() - start, 2)}s")
+
     ping = st.results.ping
+
+    log(f"SPEEDTEST: done in {round(time.time() - start_total, 2)}s")
+    log(f"SPEEDTEST: download={round(download,2)}Mbps upload={round(upload,2)}Mbps ping={round(ping,2)}ms")
 
     return download, upload, ping
 
 
-def get_wifi_info():
-    cmd = ["netsh", "wlan", "show", "interfaces"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    signal = None
-    ssid = None
-
-    for line in result.stdout.splitlines():
-        if "SSID" in line and "BSSID" not in line:
-            ssid = line.split(":")[1].strip()
-        if "Signal" in line:
-            signal = line.split(":")[1].strip()
-
-    return ssid, signal
-
-
 def save_to_excel(rows):
+    log("EXCEL: creating workbook")
     wb = Workbook()
     ws = wb.active
     ws.title = "Network Test Results"
@@ -61,7 +80,6 @@ def save_to_excel(rows):
         "Upload Speed (Mbps)",
         "Speedtest Ping (ms)",
     ]
-
     ws.append(headers)
 
     for row in rows:
@@ -69,19 +87,17 @@ def save_to_excel(rows):
 
     filename = f"network_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     wb.save(filename)
-
-    print(f"Excel report saved as: {filename}")
-
+    log(f"EXCEL: saved file -> {filename}")
 
 
 if __name__ == "__main__":
-    print("Running network diagnostics (5 runs)...")
+    log("PROGRAM: starting network diagnostics")
 
     RUNS = 5
     excel_rows = []
 
     for i in range(RUNS):
-        print(f"Run {i + 1}/{RUNS}")
+        log(f"PROGRAM: ===== RUN {i + 1}/{RUNS} =====")
 
         avg_latency, jitter, packet_loss = run_ping()
         download, upload, speedtest_ping = run_speedtest()
@@ -96,6 +112,7 @@ if __name__ == "__main__":
             round(speedtest_ping, 2),
         ])
 
+        log(f"PROGRAM: run {i + 1} completed")
+
     save_to_excel(excel_rows)
-
-
+    log("PROGRAM: all runs finished")
